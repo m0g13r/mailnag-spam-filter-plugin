@@ -30,9 +30,8 @@ An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows 
 1. Copy the `spamfilterplugin.py` file to your Mailnag plugins directory:
    * **Local:** `~/.local/share/mailnag/plugins/`
    * **System-wide:** `/usr/lib/python3/dist-packages/Mailnag/plugins/`
-2. **Important:** Place your screenshot image in the same folder or update the path in this README.
-3. Restart the Mailnag daemon.
-4. Enable **Advanced Spam Filter Ultra** in the Mailnag configuration window (`mailnag-config`).
+2. Restart the Mailnag daemon.
+3. Enable **Advanced Spam Filter Ultra** in the Mailnag configuration window (`mailnag-config`).
 
 ---
 
