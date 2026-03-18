@@ -12,6 +12,9 @@ An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows 
 * **Regex Patterns:** Advanced pattern matching (e.g., tracking IDs) using Python regex. **(Weight: 0-10)**
 * **TLD Blocker:** Block entire domain endings. Matches against the sender's address extension. **(Weight: 0-10)**
 
+### User Interface
+![Plugin Configuration Interface](config_gui.png)
+
 ### Technical Highlights
 * **Dynamic Scoring:** Every category has its own adjustable weight, allowing for "Soft-Filters" or "Hard-Blocks".
 * **Multipliers:** Logic-aware scoring (e.g., Subject keywords and Sender TLDs carry more weight).
@@ -27,8 +30,9 @@ An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows 
 1. Copy the `spamfilterplugin.py` file to your Mailnag plugins directory:
    * **Local:** `~/.local/share/mailnag/plugins/`
    * **System-wide:** `/usr/lib/python3/dist-packages/Mailnag/plugins/`
-2. Restart the Mailnag daemon.
-3. Enable **Advanced Spam Filter Ultra** in the Mailnag configuration window (`mailnag-config`).
+2. **Important:** Place your screenshot image in the same folder or update the path in this README.
+3. Restart the Mailnag daemon.
+4. Enable **Advanced Spam Filter Ultra** in the Mailnag configuration window (`mailnag-config`).
 
 ---
 
