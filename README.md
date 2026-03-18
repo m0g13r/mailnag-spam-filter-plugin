@@ -1,22 +1,23 @@
-# Advanced Spam Filter for Mailnag (v4.0)
+# Advanced Spam Filter for Mailnag (v4.1)
 
-An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows you to suppress unwanted email notifications using a scoring system based on Keywords, Regular Expressions (Regex), and Top-Level Domains (TLDs), while maintaining a priority Whitelist.
+An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows you to suppress unwanted email notifications using a scoring system based on Keywords, Regular Expressions (Regex), and Top-Level Domains (TLDs), while maintaining a priority Whitelist and a "Trusted" bonus system.
 
 ## ✨ Features
 
-### Five-Layer Filtering
-* **Whitelist:** Priority list to always allow specific senders or domains (e.g., `boss@company.com` or `@trusted.de`). **(Always Allow)**
+### Six-Layer Filtering
+* **Whitelist:** Priority list to always allow specific senders or domains. **(Bypasses all filters)**
 * **Threshold:** Adjustable global score (1-20). If the total points of a mail reach this limit, it gets filtered.
-* **Keywords:** Simple strings found in sender, subject, or body. **(Weight: 0-10)**
-* **Regex Patterns:** High-level pattern matching for complex spam (e.g., tracking IDs). **(Weight: 0-10)**
-* **TLD Blocker:** Block entire domain endings like `.xyz`, `.top`, or `.biz`. **(Weight: 0-10)**
+* **Trusted Sources (Bonus):** Reduces the spam score for known safe contacts. Full email addresses count double the bonus value. **(Bonus: 0-20)**
+* **Keywords:** Simple strings. Hits in the subject line count double the weight. **(Weight: 0-10)**
+* **Regex Patterns:** Advanced pattern matching (e.g., tracking IDs) using Python regex. **(Weight: 0-10)**
+* **TLD Blocker:** Block entire domain endings. Matches against the sender's address extension. **(Weight: 0-10)**
 
 ### Technical Highlights
-* **Granular Scoring:** Every category has its own adjustable weight, allowing for "Soft-Filters" or "Hard-Blocks".
-* **Deep Scan:** Filters are applied to the sender's name, email address, subject line, and the message snippet.
+* **Dynamic Scoring:** Every category has its own adjustable weight, allowing for "Soft-Filters" or "Hard-Blocks".
+* **Multipliers:** Logic-aware scoring (e.g., Subject keywords and Sender TLDs carry more weight).
+* **Improved UI:** Functional tooltips explain the scoring logic directly within the configuration window.
 * **Smart-Split Logic:** Handles complex Regex patterns (e.g., `{4,10}`) correctly without breaking at commas.
-* **Integrated Validation:** The GUI ensures that only valid Regex patterns are processed, preventing plugin crashes during runtime.
-* **Automated Hygiene:** The plugin automatically trims, deduplicates, and sorts your lists upon saving to keep the configuration clean.
+* **Automated Hygiene:** Automatically trims, deduplicates, and sorts your lists upon saving.
 * **Privacy-Focused:** Operates entirely locally; no data leaves your machine.
 
 ---
@@ -27,7 +28,7 @@ An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows 
    * **Local:** `~/.local/share/mailnag/plugins/`
    * **System-wide:** `/usr/lib/python3/dist-packages/Mailnag/plugins/`
 2. Restart the Mailnag daemon.
-3. Enable the **Advanced Spam Filter** in the Mailnag configuration window (`mailnag-config`).
+3. Enable **Advanced Spam Filter Ultra** in the Mailnag configuration window (`mailnag-config`).
 
 ---
 
@@ -35,20 +36,22 @@ An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows 
 
 The plugin adds a dedicated configuration tab to the Mailnag settings GUI where you can fine-tune the scoring:
 
-### Adjustable Weights (GUI)
+### Adjustable Weights & Bonuses (GUI)
 
-| Category | Default Weight | Description |
-| :--- | :---: | :--- |
-| **Keywords** | 2 | Simple strings in sender, subject, or body. |
-| **Regex** | 3 | Complex patterns (IDs, tracking numbers). |
-| **Blocked TLDs** | 5 | Triggered by suspicious domains (e.g., `.top`). |
+| Category | Default | Direction | Description |
+| :--- | :---: | :---: | :--- |
+| **Trusted** | 4 | **(-)** | Subtracts from score (Emails = 2x, Domains = 1x). |
+| **Keywords** | 2 | **(+)** | Simple strings (Subject = 2x weight). |
+| **Regex** | 3 | **(+)** | Complex patterns in name, subject, or body. |
+| **TLDs** | 5 | **(+)** | Suspicious extensions (e.g., `.xyz`). |
 
-* **Scoring:** Set the **Global Threshold** and individual **Weights** directly next to each filter list.
+* **Scoring:** Set the **Global Threshold** (Default: 5) at the top.
 * **Input:** Rules can be entered as a comma-separated list or one rule per line.
-* **Threshold Logic:** If `(Sum of Matches) >= Threshold`, the mail is filtered.
+* **Logic:** If `(Sum of Weights - Sum of Bonuses) >= Threshold`, the mail is filtered.
 
 ---
 
 ### Requirements
 * **Mailnag**
 * **Python 3** (3.8 or higher recommended)
+* **Gtk 3.0**
