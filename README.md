@@ -1,42 +1,43 @@
-# Advanced Spam Filter for Mailnag
+Advanced Spam Filter for Mailnag (v4.0)
 
-An enhanced, rule-based spam filtering plugin for **Mailnag**. It allows you to suppress unwanted email notifications using Keywords, Regular Expressions (Regex), and Top-Level Domains (TLDs), while maintaining a priority Whitelist.
+A high-performance, granular weighted spam filter for Mailnag featuring cumulative scoring, optimized regex aggregation, and a fully customizable configuration GUI.
+Features
 
-## ✨ Features
+    Fully Granular Scoring: Every detection category has its own adjustable weight. You can fine-tune exactly how many "Spam Points" a match is worth.
 
-### Four-Layer Filtering
-* **Whitelist:** Priority list to always allow specific senders or domains (e.g., `boss@company.com` or `@trusted.de`).
-* **Keywords:** Simple comma-separated list of banned words (e.g., `viagra`, `casino`).
-* **Regex Patterns:** High-level pattern matching for complex spam (e.g., tracking IDs, "Urgent" notices).
-* **TLD Blocker:** Block entire domain endings like `.xyz`, `.top`, or `.biz`.
+    Adjustable Global Threshold: Set the total score required to filter an email. This allows for anything from aggressive filtering to a "safety net" approach.
 
-### Technical Highlights
-* **Deep Scan:** Filters are applied to the sender's name, email address, subject line, and the message snippet.
-* **Smart-Split Logic:** Handles complex Regex patterns (e.g., `{4,10}`) correctly without breaking at commas.
-* **Integrated Validation:** The GUI highlights invalid Regex patterns in **red**, preventing plugin crashes during runtime.
-* **Privacy-Focused:** Operates entirely locally; no data leaves your machine.
+    Intelligent Whitelisting: Supports exact email addresses and domain-wide filters (e.g., @company.com). Protected against spoofing via strict regex anchoring ($).
 
----
+    Smart-Split Logic: Automatically handles patterns entered line-by-line or comma-separated. It intelligently preserves regex quantifiers like {1,3}.
 
-## 🚀 Installation
+    Automated Hygiene: Upon saving, all lists are trimmed, deduplicated, and sorted alphabetically to keep your configuration file clean and readable.
 
-1. Copy the `spamfilter.py` file to your Mailnag plugins directory:
-   * **Local:** `~/.local/share/mailnag/plugins/`
-   * **System-wide:** `/usr/lib/python3/dist-packages/Mailnag/plugins/`
-2. Restart the Mailnag daemon.
-3. Enable the **Advanced Spam Filter** in the Mailnag configuration window (`mailnag-config`).
+    Performance Optimized: Category-specific regex engines ensure fast processing with minimal system impact.
 
----
+Scoring & Configuration
 
-## ⚙️ Configuration
+The filter calculates a score for every incoming mail by adding up the weights of all matched categories. If the total score reaches or exceeds your Global Threshold, the mail is filtered.
+Adjustable Weights (GUI)
+Category	Default Weight	Description
+Keywords	2	Simple strings/phrases in sender name, subject, or body.
+Regex	3	Complex patterns (e.g., tracking IDs, dynamic hashes).
+Blocked TLDs	5	Triggered if the sender's domain matches a blocked TLD.
 
-The plugin adds a dedicated configuration tab to the Mailnag settings GUI. 
+Example Strategy:
 
-* **Input:** Rules can be entered as a comma-separated list or one rule per line.
-* **Validation:** If a Regex pattern is syntactically incorrect, the input field will provide visual feedback (red highlighting) to ensure stability.
+    Set Threshold to 10 and TLD Weight to 10 to block suspicious TLDs instantly.
 
----
+    Set Threshold to 5 and Keyword Weight to 1 to require multiple keyword matches before a mail is flagged as spam.
 
-### Requirements
-* **Mailnag**
-* **Python 3**
+Installation
+
+    Copy spamfilterplugin.py to your Mailnag plugin directory:
+
+        System-wide: /usr/lib/python3.14/site-packages/Mailnag/plugins/
+
+        Local: ~/.local/share/mailnag/plugins/
+
+    Open Mailnag Configuration and enable "Advanced Spam Filter".
+
+    Go to the plugin settings tab to configure your custom weights, threshold, and patterns.
