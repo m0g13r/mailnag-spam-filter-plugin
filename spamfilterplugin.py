@@ -27,9 +27,10 @@ class SpamfilterPlugin(Plugin):
         self._kw_super_re = None
         self._rx_res = []
         self._tl_set = set()
-        self._trusted_domains = []
+        self._trusted_domains = set()  # set für O(1)-Lookup
         self._trusted_emails = []
         self._cfg_vals = {}
+        self._widgets = {}  # Widget-Cache
 
     def _split_smart(self, text):
         if not text: return []
@@ -49,8 +50,15 @@ class SpamfilterPlugin(Plugin):
         for k, d in [('threshold', 5), ('weight_kw', 2), ('weight_rx', 3), ('weight_tl', 5), ('bonus_tr', 4)]:
             try:
                 self._cfg_vals[k] = int(config.get(k, d))
-            except:
+            except (ValueError, TypeError):
                 self._cfg_vals[k] = d
+
+        # Häufig genutzte Werte als Attribute cachen → kein dict.get() im Hot-Path
+        self._threshold  = self._cfg_vals['threshold']
+        self._weight_kw  = self._cfg_vals['weight_kw']
+        self._weight_rx  = self._cfg_vals['weight_rx']
+        self._weight_tl  = self._cfg_vals['weight_tl']
+        self._bonus_tr   = self._cfg_vals['bonus_tr']
 
         wl_raw = self._split_smart(config.get('whitelist', plugin_defaults['whitelist']))
         if wl_raw:
@@ -59,7 +67,7 @@ class SpamfilterPlugin(Plugin):
 
         tr_raw = self._split_smart(config.get('trusted', plugin_defaults['trusted']))
         self._trusted_emails = [t.lower() for t in tr_raw if '@' in t]
-        self._trusted_domains = [t.lower() for t in tr_raw if '@' not in t]
+        self._trusted_domains = {t.lower() for t in tr_raw if '@' not in t}  # set → O(1)
 
         kw_raw = self._split_smart(config.get('keywords', ''))
         if kw_raw:
@@ -72,7 +80,7 @@ class SpamfilterPlugin(Plugin):
         self._rx_res = []
         for p in rx_raw:
             try: self._rx_res.append(re.compile(p, re.I | re.UNICODE))
-            except: continue
+            except re.error: continue
 
         self._filter_mails_hook = lambda mails: [m for m in mails if not self._is_filtered(m)]
         self.get_mailnag_controller().get_hooks().register_hook_func(HookTypes.FILTER_MAILS, self._filter_mails_hook)
@@ -90,6 +98,7 @@ class SpamfilterPlugin(Plugin):
     def has_config_ui(self): return True
 
     def get_config_ui(self):
+        self._widgets = {}  # Cache zurücksetzen
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, border_width=10)
         
         top_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -100,6 +109,7 @@ class SpamfilterPlugin(Plugin):
         spin_t = Gtk.SpinButton(adjustment=adj_t, name='threshold')
         spin_t.set_tooltip_text(_("Total score limit for filtering."))
         top_hbox.pack_start(spin_t, False, False, 0)
+        self._widgets['threshold'] = spin_t
         main_box.pack_start(top_hbox, False, False, 0)
 
         main_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 5)
@@ -117,12 +127,14 @@ class SpamfilterPlugin(Plugin):
                 spin = Gtk.SpinButton(adjustment=adj, name=value_name)
                 spin.set_tooltip_text(_("Score impact value."))
                 hb.pack_start(spin, False, False, 0)
+                self._widgets[value_name] = spin
             
             grid.attach(hb, 0, row * 2, 1, 1)
             sw = Gtk.ScrolledWindow(shadow_type=Gtk.ShadowType.IN, hexpand=True, vexpand=True, height_request=60)
             tv = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD, name=tv_name)
             tv.set_tooltip_text(help_txt)
             sw.add(tv); grid.attach(sw, 0, row * 2 + 1, 1, 1)
+            self._widgets[tv_name] = tv
 
         add_row("Whitelist:", None, "wl", 0, 
                 _("Bypasses all filters."))
@@ -140,19 +152,19 @@ class SpamfilterPlugin(Plugin):
     def load_ui_from_config(self, ui):
         c = self.get_config()
         for k in ['threshold', 'weight_kw', 'weight_rx', 'weight_tl', 'bonus_tr']:
-            w = self._find_w(ui, k)
+            w = self._widgets.get(k) or self._find_w(ui, k)
             if w: w.set_value(float(c.get(k, plugin_defaults[k])))
         for k, n in [('whitelist', 'wl'), ('trusted', 'tr'), ('keywords', 'kw'), ('regex', 'rx'), ('tlds', 'tl')]:
-            tv = self._find_w(ui, n)
+            tv = self._widgets.get(n) or self._find_w(ui, n)
             if tv: tv.get_buffer().set_text(str(c.get(k, plugin_defaults.get(k, ''))))
 
     def save_ui_to_config(self, ui):
         c = self.get_config()
         for k in ['threshold', 'weight_kw', 'weight_rx', 'weight_tl', 'bonus_tr']:
-            w = self._find_w(ui, k)
+            w = self._widgets.get(k) or self._find_w(ui, k)
             if w: c[k] = int(w.get_value())
         for k, n in [('whitelist', 'wl'), ('trusted', 'tr'), ('keywords', 'kw'), ('regex', 'rx'), ('tlds', 'tl')]:
-            tv = self._find_w(ui, n)
+            tv = self._widgets.get(n) or self._find_w(ui, n)
             if tv:
                 b = tv.get_buffer()
                 raw = b.get_text(b.get_start_iter(), b.get_end_iter(), False)
@@ -173,33 +185,34 @@ class SpamfilterPlugin(Plugin):
         if self._whitelist_re and self._whitelist_re.search(addr): return False
         
         score = 0
-        bonus_base = self._cfg_vals.get('bonus_tr', 4)
-        if addr in self._trusted_emails: score -= (bonus_base * 2)
-        elif any(addr.endswith(d) for d in self._trusted_domains): score -= bonus_base
+        if addr in self._trusted_emails:
+            score -= (self._bonus_tr * 2)
+        else:
+            domain = addr.rsplit('@', 1)[-1] if '@' in addr else addr
+            if domain in self._trusted_domains:
+                score -= self._bonus_tr
 
-        if score < -10: return False
+        if score < 0: return False  # Net-Trust → kein Spam
 
         subj = (getattr(mail, 'subject', '') or '').lower()
         body = (getattr(mail, 'content', '') or getattr(mail, 'snippet', '') or '').lower()
-        threshold = self._cfg_vals.get('threshold', 5)
 
         if self._kw_super_re:
-            w_kw = self._cfg_vals.get('weight_kw', 2)
-            if self._kw_super_re.search(subj): score += (w_kw * 2)
-            if score >= threshold: return True
-            if self._kw_super_re.search(body): score += w_kw
-            if score >= threshold: return True
+            if self._kw_super_re.search(subj): score += (self._weight_kw * 2)
+            if score >= self._threshold: return True
+            if self._kw_super_re.search(body): score += self._weight_kw
+            if score >= self._threshold: return True
 
         if self._tl_set:
             tld = addr.split('.')[-1]
-            if tld in self._tl_set: score += (self._cfg_vals.get('weight_tl', 5) * 2)
-            if score >= threshold: return True
+            if tld in self._tl_set: score += (self._weight_tl * 2)
+            if score >= self._threshold: return True
 
         if self._rx_res:
             name = (getattr(mail, 'sender', ('',''))[0] or '').lower()
             content = f"{name} {subj} {body}"
             for r in self._rx_res:
-                if r.search(content): score += self._cfg_vals.get('weight_rx', 3)
-                if score >= threshold: return True
+                if r.search(content): score += self._weight_rx
+                if score >= self._threshold: return True
             
-        return score >= threshold
+        return score >= self._threshold
