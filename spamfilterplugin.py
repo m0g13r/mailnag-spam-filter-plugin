@@ -139,13 +139,13 @@ class SpamfilterPlugin(Plugin):
         add_row("Whitelist:", None, "wl", 0, 
                 _("Bypasses all filters."))
         add_row("Trusted Sources:", "bonus_tr", "tr", 1, 
-                _("Subtracts from score. Full addresses count double, domains count single."), 4, True)
+                _("Subtracts from score (Emails = 2x, Domains = 1x)."), 4, True)
         add_row("Spam Keywords:", "weight_kw", "kw", 2, 
-                _("Adds to score. Hits in the subject line count double."), 2)
+                _("Simple strings (Subject = 2x weight)."), 2)
         add_row("Regex Patterns:", "weight_rx", "rx", 3, 
-                _("Adds to score. Advanced pattern matching for mail content."), 3)
+                _("Complex patterns in name, subject, or body."), 3)
         add_row("Blocked TLDs:", "weight_tl", "tl", 4, 
-                _("Adds to score. Checked against sender address extension."), 5)
+                _("Suspicious extensions (e.g., .xyz)."), 5)
 
         main_box.show_all(); return main_box
 
@@ -192,8 +192,6 @@ class SpamfilterPlugin(Plugin):
             if domain in self._trusted_domains:
                 score -= self._bonus_tr
 
-        if score < 0: return False  # Net-Trust → kein Spam
-
         subj = (getattr(mail, 'subject', '') or '').lower()
         body = (getattr(mail, 'content', '') or getattr(mail, 'snippet', '') or '').lower()
 
@@ -205,7 +203,7 @@ class SpamfilterPlugin(Plugin):
 
         if self._tl_set:
             tld = addr.split('.')[-1]
-            if tld in self._tl_set: score += (self._weight_tl * 2)
+            if tld in self._tl_set: score += self._weight_tl
             if score >= self._threshold: return True
 
         if self._rx_res:
