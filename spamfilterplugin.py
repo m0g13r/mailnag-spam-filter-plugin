@@ -102,6 +102,21 @@ class SpamfilterPlugin(Plugin):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, border_width=10)
         
         top_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        
+        lbl_p = Gtk.Label(label=_("Preset:"), xalign=0)
+        top_hbox.pack_start(lbl_p, False, False, 0)
+        
+        preset_combo = Gtk.ComboBoxText(name='preset_combo')
+        preset_combo.append("custom", _("Custom"))
+        preset_combo.append("high", _("High (Aggressive)"))
+        preset_combo.append("medium", _("Medium (Default)"))
+        preset_combo.append("low", _("Low (Relaxed)"))
+        preset_combo.set_active_id("custom")
+        top_hbox.pack_start(preset_combo, False, False, 0)
+        self._widgets['preset_combo'] = preset_combo
+        
+        top_hbox.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 5)
+
         lbl_t = Gtk.Label(label=_("Global Spam Threshold:"), xalign=0)
         top_hbox.pack_start(lbl_t, False, False, 0)
         
@@ -115,6 +130,8 @@ class SpamfilterPlugin(Plugin):
         main_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 5)
         grid = Gtk.Grid(column_spacing=10, row_spacing=6)
         main_box.pack_start(grid, True, True, 0)
+
+        self._preset_changing = False
 
         def add_row(label_text, value_name, tv_name, row, help_txt, def_val=0, is_bonus=False):
             hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -147,16 +164,69 @@ class SpamfilterPlugin(Plugin):
         add_row("Blocked TLDs:", "weight_tl", "tl", 4, 
                 _("Suspicious extensions (e.g., .xyz)."), 5)
 
+        def on_preset_changed(combo):
+            if getattr(self, '_preset_changing', False): return
+            self._preset_changing = True
+            preset = combo.get_active_id()
+            if preset == "high":
+                self._widgets['threshold'].set_value(3)
+                self._widgets['bonus_tr'].set_value(2)
+                self._widgets['weight_kw'].set_value(3)
+                self._widgets['weight_rx'].set_value(4)
+                self._widgets['weight_tl'].set_value(6)
+            elif preset == "medium":
+                self._widgets['threshold'].set_value(5)
+                self._widgets['bonus_tr'].set_value(4)
+                self._widgets['weight_kw'].set_value(2)
+                self._widgets['weight_rx'].set_value(3)
+                self._widgets['weight_tl'].set_value(5)
+            elif preset == "low":
+                self._widgets['threshold'].set_value(8)
+                self._widgets['bonus_tr'].set_value(5)
+                self._widgets['weight_kw'].set_value(1)
+                self._widgets['weight_rx'].set_value(2)
+                self._widgets['weight_tl'].set_value(3)
+            self._preset_changing = False
+
+        def on_spin_changed(spin):
+            if not getattr(self, '_preset_changing', False) and preset_combo.get_active_id() != "custom":
+                self._preset_changing = True
+                preset_combo.set_active_id("custom")
+                self._preset_changing = False
+
+        preset_combo.connect("changed", on_preset_changed)
+        for k in ['threshold', 'weight_kw', 'weight_rx', 'weight_tl', 'bonus_tr']:
+            if k in self._widgets:
+                self._widgets[k].connect("value-changed", on_spin_changed)
+
         main_box.show_all(); return main_box
 
     def load_ui_from_config(self, ui):
         c = self.get_config()
+        self._preset_changing = True
         for k in ['threshold', 'weight_kw', 'weight_rx', 'weight_tl', 'bonus_tr']:
             w = self._widgets.get(k) or self._find_w(ui, k)
             if w: w.set_value(float(c.get(k, plugin_defaults[k])))
         for k, n in [('whitelist', 'wl'), ('trusted', 'tr'), ('keywords', 'kw'), ('regex', 'rx'), ('tlds', 'tl')]:
             tv = self._widgets.get(n) or self._find_w(ui, n)
             if tv: tv.get_buffer().set_text(str(c.get(k, plugin_defaults.get(k, ''))))
+            
+        preset_combo = self._widgets.get('preset_combo') or self._find_w(ui, 'preset_combo')
+        if preset_combo:
+            t = float(c.get('threshold', plugin_defaults['threshold']))
+            kw = float(c.get('weight_kw', plugin_defaults['weight_kw']))
+            rx = float(c.get('weight_rx', plugin_defaults['weight_rx']))
+            tl = float(c.get('weight_tl', plugin_defaults['weight_tl']))
+            tr = float(c.get('bonus_tr', plugin_defaults['bonus_tr']))
+            if (t, tr, kw, rx, tl) == (3, 2, 3, 4, 6):
+                preset_combo.set_active_id("high")
+            elif (t, tr, kw, rx, tl) == (5, 4, 2, 3, 5):
+                preset_combo.set_active_id("medium")
+            elif (t, tr, kw, rx, tl) == (8, 5, 1, 2, 3):
+                preset_combo.set_active_id("low")
+            else:
+                preset_combo.set_active_id("custom")
+        self._preset_changing = False
 
     def save_ui_to_config(self, ui):
         c = self.get_config()
@@ -168,7 +238,7 @@ class SpamfilterPlugin(Plugin):
             if tv:
                 b = tv.get_buffer()
                 raw = b.get_text(b.get_start_iter(), b.get_end_iter(), False)
-                items = sorted(list(set(self._split_smart(raw))))
+                items = list(dict.fromkeys(self._split_smart(raw)))
                 c[k] = '\n'.join(items)
                 b.set_text(c[k])
 
@@ -181,7 +251,8 @@ class SpamfilterPlugin(Plugin):
         return None
 
     def _is_filtered(self, mail):
-        addr = (getattr(mail, 'sender', ('', ''))[1] or '').lower()
+        sender = getattr(mail, 'sender', None) or ('', '')
+        addr = (sender[1] or '').lower()
         if self._whitelist_re and self._whitelist_re.search(addr): return False
         
         score = 0
@@ -192,8 +263,8 @@ class SpamfilterPlugin(Plugin):
             if domain in self._trusted_domains:
                 score -= self._bonus_tr
 
-        subj = (getattr(mail, 'subject', '') or '').lower()
-        body = (getattr(mail, 'content', '') or getattr(mail, 'snippet', '') or '').lower()
+        subj = getattr(mail, 'subject', None) or ''
+        body = getattr(mail, 'content', None) or getattr(mail, 'snippet', None) or ''
 
         if self._kw_super_re:
             if self._kw_super_re.search(subj): score += (self._weight_kw * 2)
@@ -207,10 +278,9 @@ class SpamfilterPlugin(Plugin):
             if score >= self._threshold: return True
 
         if self._rx_res:
-            name = (getattr(mail, 'sender', ('',''))[0] or '').lower()
-            content = f"{name} {subj} {body}"
+            name = sender[0] or ''
             for r in self._rx_res:
-                if r.search(content): score += self._weight_rx
+                if r.search(name) or r.search(subj) or r.search(body): score += self._weight_rx
                 if score >= self._threshold: return True
             
         return score >= self._threshold
