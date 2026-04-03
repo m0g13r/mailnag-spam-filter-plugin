@@ -20,6 +20,39 @@ plugin_defaults = {
     'bonus_tr': 4
 }
 
+# FIX 3: Bekannte Markennamen, die im Display-Name nichts verloren haben,
+# wenn die sendende Domain nicht zur Marke gehört.
+_BRAND_IMPERSONATION = (
+    'telekom', 'deutsche telekom', 'sparkasse', 'postbank', 'volksbank',
+    'dhl', 'fedex', 'ups', 'hermes', 'dpd',
+    'amazon', 'paypal', 'apple', 'microsoft', 'netflix', 'google',
+    'ikea', 'lidl', 'aldi', 'ebay', 'otto', 'zalando',
+)
+_BRAND_DOMAINS = {
+    'telekom': ('telekom.de', 'telekom.com', 't-online.de', 't-mobile.de'),
+    'sparkasse': ('sparkasse.de',),
+    'postbank': ('postbank.de',),
+    'volksbank': ('volksbank.de', 'vr-bank.de'),
+    'dhl': ('dhl.de', 'dhl.com', 'deutschepost.de'),
+    'fedex': ('fedex.com',),
+    'ups': ('ups.com',),
+    'hermes': ('myhermes.de', 'hermesworld.com'),
+    'dpd': ('dpd.de', 'dpd.com'),
+    'amazon': ('amazon.de', 'amazon.com', 'amazon.co.uk'),
+    'paypal': ('paypal.de', 'paypal.com'),
+    'apple': ('apple.com',),
+    'microsoft': ('microsoft.com', 'live.com', 'outlook.com', 'hotmail.com'),
+    'netflix': ('netflix.com',),
+    'google': ('google.de', 'google.com', 'gmail.com'),
+    'ikea': ('ikea.com', 'ikea.de'),
+    'lidl': ('lidl.de', 'lidl.com'),
+    'aldi': ('aldi.de', 'aldi.com', 'aldi-nord.de', 'aldi-sued.de'),
+    'ebay': ('ebay.de', 'ebay.com'),
+    'otto': ('otto.de',),
+    'zalando': ('zalando.de', 'zalando.com'),
+}
+
+
 class SpamfilterPlugin(Plugin):
 
     def __init__(self):
@@ -105,7 +138,7 @@ class SpamfilterPlugin(Plugin):
             self._filter_mails_hook = None
 
     def get_manifest(self):
-        return (_("Advanced Spam Filter Ultra"), _("Weighted scoring with priority regex and name checks."), "4.2", "User")
+        return (_("Advanced Spam Filter Ultra"), _("Weighted scoring with priority regex and name checks."), "4.3", "User")
 
     def get_default_config(self): return plugin_defaults
 
@@ -160,7 +193,7 @@ class SpamfilterPlugin(Plugin):
         add_row("Whitelist:", None, "wl", 0, _("Bypasses all filters."))
         add_row("Trusted Sources:", "bonus_tr", "tr", 1, _("Subtracts from score (Emails = 2x, Domains = 1x)."), 4, True)
         add_row("Spam Keywords:", "weight_kw", "kw", 2, _("Simple strings (Subject = 2x weight)."), 2)
-        add_row("Regex Patterns:", "weight_rx", "rx", 3, _("Complex patterns in name, subject, or body."), 3)
+        add_row("Regex Patterns:", "weight_rx", "rx", 3, _("Complex patterns in name, subject, address, or body."), 3)
         add_row("Blocked TLDs:", "weight_tl", "tl", 4, _("Suspicious extensions (e.g., .xyz)."), 5)
 
         def on_preset_changed(combo):
@@ -250,23 +283,42 @@ class SpamfilterPlugin(Plugin):
         if not addr: return False
 
         if self._whitelist_re and self._whitelist_re.search(addr): return False
-        
+
         score = 0
+        domain = addr.rsplit('@', 1)[-1] if '@' in addr else addr
+
+        # Trusted-Score
         if addr in self._trusted_emails:
             score -= self._bonus_tr_doubled
-        else:
-            domain = addr.rsplit('@', 1)[-1] if '@' in addr else addr
-            if domain in self._trusted_domains:
-                score -= self._bonus_tr
+        elif domain in self._trusted_domains:
+            score -= self._bonus_tr
 
-        subj = self._decode_header(getattr(mail, 'subject', None) or '').lower()
+        # FIX 2: Betreff mit Fallback für POP3 (subject kommt manchmal
+        # erst nach dem Filter-Hook als rohes Header-Attribut an)
+        subj_raw = (getattr(mail, 'subject', None)
+                    or getattr(mail, 'mail_header', {}).get('subject', '')
+                    or '')
+        subj = self._decode_header(subj_raw).lower()
+
         body = (getattr(mail, 'content', None) or getattr(mail, 'snippet', None) or '').lower()
+
+        # FIX 3: Brand-Impersonation im Display-Name erkennen.
+        # Enthält der Anzeigename eine bekannte Marke, muss die sendende
+        # Domain auch tatsächlich zu dieser Marke gehören.
+        for brand in _BRAND_IMPERSONATION:
+            if brand in name:
+                allowed = _BRAND_DOMAINS.get(brand, ())
+                if not any(domain == d or domain.endswith('.' + d) for d in allowed):
+                    score += self._weight_rx  # Impersonation-Strafe
+                break  # ein Treffer reicht
 
         # PRIORITY 1: Technical Patterns (Regex)
         # Often the most reliable indicator for "Newsletter-Hijack" spam.
+        # FIX 1: addr wird jetzt ebenfalls gegen alle Regex geprüft.
         if self._rx_res:
             for r in self._rx_res:
                 if r.search(name): score += self._weight_rx
+                if r.search(addr): score += self._weight_rx        # ← FIX 1
                 if r.search(subj): score += self._weight_rx_doubled
                 if r.search(body): score += self._weight_rx
                 if score >= self._threshold: return True
@@ -276,7 +328,7 @@ class SpamfilterPlugin(Plugin):
             name_kws = set(self._kw_super_re.findall(name))
             subj_kws = set(self._kw_super_re.findall(subj))
             body_kws = set(self._kw_super_re.findall(body))
-            
+
             score += len(name_kws) * self._weight_kw
             score += len(subj_kws) * self._weight_kw_doubled
             score += len(body_kws) * self._weight_kw
@@ -284,8 +336,7 @@ class SpamfilterPlugin(Plugin):
 
         # PRIORITY 3: TLD Checks
         if self._tl_set:
-            domain = addr.rsplit('@', 1)[-1] if '@' in addr else addr
             tld = domain.rsplit('.', 1)[-1]
             if tld in self._tl_set: score += self._weight_tl
-            
+
         return score >= self._threshold
