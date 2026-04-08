@@ -23,16 +23,28 @@ plugin_defaults = {
 # FIX 3: Bekannte Markennamen, die im Display-Name nichts verloren haben,
 # wenn die sendende Domain nicht zur Marke gehört.
 _BRAND_IMPERSONATION = (
-    'telekom', 'deutsche telekom', 'sparkasse', 'postbank', 'volksbank',
+    'telekom', 'deutsche telekom', 't-mobile', 'tmobile',
+    'vodafone', 'o2', 'congstar', '1&1', 'freenet',
+    'sparkasse', 'postbank', 'volksbank', 'commerzbank', 'deutsche bank',
     'dhl', 'fedex', 'ups', 'hermes', 'dpd',
     'amazon', 'paypal', 'apple', 'microsoft', 'netflix', 'google',
     'ikea', 'lidl', 'aldi', 'ebay', 'otto', 'zalando',
 )
 _BRAND_DOMAINS = {
     'telekom': ('telekom.de', 'telekom.com', 't-online.de', 't-mobile.de'),
+    'deutsche telekom': ('telekom.de', 'telekom.com'),
+    't-mobile': ('t-mobile.de', 't-mobile.com', 'telekom.de'),
+    'tmobile': ('t-mobile.de', 't-mobile.com', 'telekom.de'),
+    'vodafone': ('vodafone.de', 'vodafone.com'),
+    'o2': ('o2online.de', 'o2.de', 'o2.com', 'telefonica.de'),
+    'congstar': ('congstar.de',),
+    '1&1': ('1und1.de', '1and1.de', '1and1.com'),
+    'freenet': ('freenet.de',),
     'sparkasse': ('sparkasse.de',),
     'postbank': ('postbank.de',),
     'volksbank': ('volksbank.de', 'vr-bank.de'),
+    'commerzbank': ('commerzbank.de', 'commerzbank.com'),
+    'deutsche bank': ('db.com', 'deutschebank.de'),
     'dhl': ('dhl.de', 'dhl.com', 'deutschepost.de'),
     'fedex': ('fedex.com',),
     'ups': ('ups.com',),
@@ -51,6 +63,16 @@ _BRAND_DOMAINS = {
     'otto': ('otto.de',),
     'zalando': ('zalando.de', 'zalando.com'),
 }
+
+# Regex-Muster für bekannte Spam-Infrastrukturen (senderübergreifend).
+# Wird gegen die Absenderadresse geprüft – unabhängig von der Config.
+_INFRA_SPAM_RE = re.compile(
+    r'deliverypro'          # Massenmailing-Dienst aus beiden Beispiel-Mails
+    r'|privatedns\.org'     # Privacy-Shield-Domain, nie legitimer Absender
+    r'|\.privatedns\.'      # Subdomain-Varianten
+    r'|pagesport\.com',     # weitere bekannte Spam-Relay-Domain
+    re.I
+)
 
 
 class SpamfilterPlugin(Plugin):
@@ -283,6 +305,11 @@ class SpamfilterPlugin(Plugin):
         if not addr: return False
 
         if self._whitelist_re and self._whitelist_re.search(addr): return False
+
+        # FIX 4: Bekannte Spam-Infrastruktur sofort filtern (kein Score nötig).
+        # Trifft z.B. "deliverypro", "privatedns.org", "pagesport.com".
+        if _INFRA_SPAM_RE.search(addr):
+            return True
 
         score = 0
         domain = addr.rsplit('@', 1)[-1] if '@' in addr else addr
