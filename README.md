@@ -1,4 +1,4 @@
-# Advanced Spam Filter for Mailnag (v4.2)
+# Advanced Spam Filter for Mailnag (v4.4)
 
 An enhanced, granular weighted spam filtering plugin for **Mailnag**. It allows you to suppress unwanted email notifications using a scoring system based on Keywords, Regular Expressions (Regex), and Top-Level Domains (TLDs), while maintaining a priority Whitelist and a "Trusted" bonus system.
 
