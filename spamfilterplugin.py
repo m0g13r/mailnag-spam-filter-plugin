@@ -258,6 +258,8 @@ class SpamfilterPlugin(Plugin):
             "<small><i>Format: BrandKeyword: domain.com, domain2.com  (one brand per line; "
             "use sub-brand names as keywords, e.g. 't-mobile' separately from 'telekom')</i></small>"
         )
+        lbl_help.set_line_wrap(True)
+        lbl_help.set_max_width_chars(60)
         tab_brands.pack_start(lbl_help, False, False, 0)
         add_row(tab_brands, "Protected Brands", None, "br",
                 _("If sender display name contains a brand keyword but the domain isn't in its allowed list, "
