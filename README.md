@@ -14,6 +14,9 @@ An enhanced, granular weighted spam filtering plugin for **Mailnag**. This plugi
 * **Regex Patterns:** Advanced pattern matching for names, addresses, subjects, or bodies. Matches in the **subject line count double**.
 * **TLD Blocker:** Adds the **TLD Weight** if the sender's domain ends in a blacklisted extension (e.g., `.xyz`).
 
+### User Interface
+![Plugin Configuration Interface](config_gui.png)
+
 ### Technical Highlights
 * **Dynamic Scoring:** Every category has adjustable weights, allowing for "Soft-Filters" or "Hard-Blocks".
 * **Smart-Split Logic:** Correctly handles complex Regex patterns (like `{4,10}`) without breaking at commas.
