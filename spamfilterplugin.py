@@ -2,9 +2,17 @@ import gi
 import re
 import email.header
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk          # Gdk removed — was imported but never used (BUG #5)
 from Mailnag.common.plugins import Plugin, HookTypes
 from Mailnag.common.i18n import _
+
+# OPT: pre-compile the comma-guard used in _split_smart so it is not
+#      recompiled on every call.
+_BRACE_COMMA_RE = re.compile(r'\{[^}]*,[^}]*\}')
+
+# Maximum number of characters scanned in the email body.
+# Avoids hanging the UI thread on multi-megabyte HTML newsletters. (OPT)
+_BODY_SCAN_LIMIT = 20_000
 
 # FIX #5: Added German phishing vocabulary (warnung, konto, gesperrt, dringend…)
 # FIX #6: Added bulk-mailer numeric address pattern to regex defaults
@@ -17,9 +25,13 @@ plugin_defaults = {
         'warnung, konto, gesperrt, dringend, verifizieren, bestaetigen, '
         'verify, account suspended, click here, act now, limited time'
     ),
+    # BUG #1 FIX: raw-string concatenation produced a literal backslash-n
+    # (r'...\n' r'...') so both patterns were merged into one regex that
+    # required a real newline in the scanned text — the bulk-mailer pattern
+    # never fired. Each pattern must be on its own line in a regular string.
     'regex': (
-        r'(id|ref|nr|fall)[\s:#-]?[a-z0-9-]{4,}\n'
-        r'newsletter\.\d{5,}'          # bulk-mailer numeric local-parts
+        '(id|ref|nr|fall)[\\s:#-]?[a-z0-9-]{4,}\n'
+        'newsletter\\.\\d{5,}'
     ),
     'tlds': 'xyz, top, click, link, biz, info',
     'infra_spam': 'deliverypro, privatedns.org, .privatedns., pagesport.com, engineproperty.com, green-alien.net',
@@ -42,28 +54,36 @@ plugin_defaults = {
 
 class SpamfilterPlugin(Plugin):
     def __init__(self):
-        self._filter_mails_hook = None
-        self._whitelist_re = None
-        self._infra_spam_re = None
-        self._kw_super_re = None
-        self._rx_res = []
-        self._tl_set = set()
-        self._trusted_domains = set()
-        self._trusted_emails = set()
+        self._filter_mails_hook  = None
+        self._whitelist_re       = None
+        self._infra_spam_re      = None
+        self._kw_super_re        = None
+        self._brand_name_re      = None   # OPT: compiled alternation for brand lookup
+        self._rx_res             = []
+        self._tl_set             = set()
+        self._trusted_domains    = set()
+        self._trusted_emails     = set()
         self._brand_impersonation = []
-        self._brand_domains = {}
-        self._cfg_vals = {}
-        self._widgets = {}
+        self._brand_domains      = {}
+        self._cfg_vals           = {}
+        self._widgets            = {}
+        # BUG #4 FIX: initialise here so load_ui_from_config cannot raise
+        # AttributeError if called before get_config_ui.
+        self._preset_changing    = False
 
     def _decode_header(self, text):
+        """Decode a possibly RFC 2047-encoded header value.
+
+        BUG #2 FIX: the previous implementation joined decoded parts with ''
+        which fused adjacent words when a plain-text part followed an encoded
+        word without an explicit space (e.g. '=?utf-8?q?Dringend=3A?=Ihr'
+        became 'Dringend:Ihr').  email.header.make_header() follows RFC 2047
+        whitespace rules correctly.
+        """
         if not text:
             return ""
         try:
-            parts = email.header.decode_header(text)
-            return ''.join(
-                p.decode(e or 'utf-8', 'replace') if isinstance(p, bytes) else p
-                for p, e in parts
-            )
+            return str(email.header.make_header(email.header.decode_header(text)))
         except Exception:
             return str(text)
 
@@ -72,6 +92,13 @@ class SpamfilterPlugin(Plugin):
         return text.lower().strip() if text else ""
 
     def _split_smart(self, text):
+        """Split a config value into individual tokens / patterns.
+
+        Comma-separated simple lists are exploded; lines that look like regex
+        patterns (containing a quantifier brace with a comma, e.g. {4,})
+        are kept intact.  The guard regex is a module-level constant so it is
+        not recompiled on every call (OPT).
+        """
         if not text:
             return []
         lines = text.splitlines()
@@ -80,7 +107,7 @@ class SpamfilterPlugin(Plugin):
             line = line.strip()
             if not line:
                 continue
-            if ',' in line and not re.search(r'\{.*,.*\}', line):
+            if ',' in line and not _BRACE_COMMA_RE.search(line):
                 final_patterns.extend([p.strip() for p in line.split(',') if p.strip()])
             else:
                 final_patterns.append(line)
@@ -94,14 +121,14 @@ class SpamfilterPlugin(Plugin):
             except (ValueError, TypeError):
                 self._cfg_vals[k] = d
 
-        self._threshold          = self._cfg_vals['threshold']
-        self._weight_kw          = self._cfg_vals['weight_kw']
-        self._weight_rx          = self._cfg_vals['weight_rx']
-        self._weight_tl          = self._cfg_vals['weight_tl']
-        self._bonus_tr           = self._cfg_vals['bonus_tr']
-        self._weight_kw_doubled  = self._weight_kw * 2
-        self._weight_rx_doubled  = self._weight_rx * 2
-        self._bonus_tr_doubled   = self._bonus_tr * 2
+        self._threshold         = self._cfg_vals['threshold']
+        self._weight_kw         = self._cfg_vals['weight_kw']
+        self._weight_rx         = self._cfg_vals['weight_rx']
+        self._weight_tl         = self._cfg_vals['weight_tl']
+        self._bonus_tr          = self._cfg_vals['bonus_tr']
+        self._weight_kw_doubled = self._weight_kw * 2
+        self._weight_rx_doubled = self._weight_rx * 2
+        self._bonus_tr_doubled  = self._bonus_tr * 2
 
         wl_raw = self._split_smart(config.get('whitelist', plugin_defaults['whitelist']))
         if wl_raw:
@@ -122,16 +149,19 @@ class SpamfilterPlugin(Plugin):
         self._trusted_emails  = {t.lower() for t in tr_raw if '@' in t}
         self._trusted_domains = {t.lower() for t in tr_raw if '@' not in t}
 
-        kw_raw = self._split_smart(config.get('keywords', ''))
+        # BUG #3 FIX: use plugin_defaults[k] as the fallback, not ''.
+        # With '' as fallback, a fresh install silently drops all built-in
+        # keywords, TLDs, and regex patterns.
+        kw_raw = self._split_smart(config.get('keywords', plugin_defaults['keywords']))
         if kw_raw:
             self._kw_super_re = re.compile(
                 '|'.join([re.escape(k) for k in kw_raw]), re.I | re.UNICODE
             )
 
-        tl_raw = self._split_smart(config.get('tlds', ''))
+        tl_raw = self._split_smart(config.get('tlds', plugin_defaults['tlds']))
         self._tl_set = {t.lower().lstrip('.') for t in tl_raw}
 
-        rx_raw = self._split_smart(config.get('regex', ''))
+        rx_raw = self._split_smart(config.get('regex', plugin_defaults['regex']))
         self._rx_res = []
         for p in rx_raw:
             try:
@@ -151,6 +181,15 @@ class SpamfilterPlugin(Plugin):
                     d.strip().lower() for d in b_doms.split(',') if d.strip()
                 )
         self._brand_impersonation = tuple(self._brand_impersonation)
+
+        # OPT: build a single compiled alternation so brand-name detection is
+        # a single regex search rather than a Python 'in' loop per brand.
+        if self._brand_impersonation:
+            self._brand_name_re = re.compile(
+                '|'.join(re.escape(b) for b in self._brand_impersonation), re.I
+            )
+        else:
+            self._brand_name_re = None
 
         self._filter_mails_hook = lambda mails: [m for m in mails if not self._is_filtered(m)]
         self.get_mailnag_controller().get_hooks().register_hook_func(
@@ -265,8 +304,8 @@ class SpamfilterPlugin(Plugin):
                 _("If sender display name contains a brand keyword but the domain isn't in its allowed list, "
                   "Regex Weight is added. Check addr AND display name."), height=150)
 
-        self._preset_changing = False
-
+        # BUG #4 already fixed: _preset_changing initialised in __init__,
+        # so it is safe whether or not get_config_ui has been called first.
         def on_preset_changed(combo):
             if self._preset_changing:
                 return
@@ -341,9 +380,12 @@ class SpamfilterPlugin(Plugin):
             if self._infra_spam_re.search(addr) or self._infra_spam_re.search(name):
                 return True
 
-        domain = addr.rsplit('@', 1)[-1] if '@' in addr else addr
-        # Local part of address (before @) — used for keyword scanning below
-        local  = addr.rsplit('@', 1)[0]  if '@' in addr else ''
+        # BUG #6 FIX: split addr once; reuse both parts instead of calling
+        # rsplit('@', 1) twice (was on lines 344 and 346).
+        if '@' in addr:
+            local, domain = addr.rsplit('@', 1)
+        else:
+            local, domain = '', addr
 
         score = 0
         if addr in self._trusted_emails:
@@ -352,20 +394,26 @@ class SpamfilterPlugin(Plugin):
             score -= self._bonus_tr
 
         subj = self._normalize(self._decode_header(getattr(mail, 'subject', '') or ''))
-        body = self._normalize(
-            getattr(mail, 'content', None) or getattr(mail, 'snippet', None) or ''
-        )
 
-        # Brand impersonation — checked in display name AND local part of addr
-        # FIX #1: t-mobile now a brand; FIX #4: early-exit added after score update
-        for brand in self._brand_impersonation:
-            if brand in name or brand in local:
-                allowed = self._brand_domains.get(brand, ())
+        # OPT: truncate body to _BODY_SCAN_LIMIT characters before any regex
+        # or keyword scan.  A 5 MB HTML newsletter would otherwise stall the
+        # UI thread for hundreds of milliseconds per email.
+        raw_body = getattr(mail, 'content', None) or getattr(mail, 'snippet', None) or ''
+        body = self._normalize(raw_body[:_BODY_SCAN_LIMIT])
+
+        # Brand impersonation — checked in display name AND local part of addr.
+        # FIX #1: t-mobile now a brand; FIX #4: early-exit added after score update.
+        # OPT: _brand_name_re is a pre-compiled alternation; a single search
+        # call replaces iterating every brand name with Python 'in' tests.
+        if self._brand_name_re:
+            m = self._brand_name_re.search(name) or self._brand_name_re.search(local)
+            if m:
+                matched_brand = m.group(0).lower()
+                allowed = self._brand_domains.get(matched_brand, ())
                 if not any(domain == d or domain.endswith('.' + d) for d in allowed):
                     score += self._weight_rx
                     if score >= self._threshold:   # FIX #4
                         return True
-                break
 
         # Regex patterns — name, addr (full), body, subject
         if self._rx_res:
